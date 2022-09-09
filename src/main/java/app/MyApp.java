@@ -139,6 +139,8 @@ public class MyApp extends JFrame implements ActionListener, MessageListener {
 					obj1 = pubSession.createObjectMessage(gson.toJson(user));
 					textArea.append("\n" +user.getName()+": " + user.getMessage());
 					publisher.send(obj1);
+					textField.setText("");
+					textArea.requestFocus();
 				} catch (Exception e1) {
 					// TODO Auto-generated catch block
 					e1.printStackTrace();
