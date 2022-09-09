@@ -25,102 +25,58 @@ import javax.naming.Context;
 import javax.naming.InitialContext;
 import javax.swing.*;
 
+import org.apache.activemq.ActiveMQConnectionFactory;
 import org.apache.log4j.BasicConfigurator;
 
 import com.google.gson.Gson;
 
 import data.User;
 
-public class MyApp extends JFrame implements ActionListener{
+public class MyApp extends JFrame implements ActionListener, MessageListener {
+
+	private static final String APP_TOPIC = "thanthidet";
+	private static final String DEFAULT_BROKER_NAME = "tcp://localhost:61616";
+
+	private javax.jms.Connection connect = null;
+	private javax.jms.Session pubSession = null;
+	private javax.jms.Session subSession = null;
+	private javax.jms.MessageProducer publisher = null;
+
 	private JTextArea textArea;
 	private JTextField username;
 	private JTextField password;
 	private JTextField textField;
-	private Session session;
 	private Gson gson;
-	private MessageProducer producer;
-	private MessageConsumer receiver;
+	private String usn, ps;
 	private User user;
-	private JButton b;
+	private JButton b, cnn;
+	private static boolean login = false;
+	private void chatter(String broker, String username, String password) {
+		try {
+			javax.jms.ConnectionFactory factory;
+			factory = new ActiveMQConnectionFactory(username, password, broker);
+			connect = factory.createConnection(username, password);
+			pubSession = connect.createSession(false, javax.jms.Session.AUTO_ACKNOWLEDGE);
+			subSession = connect.createSession(false, javax.jms.Session.AUTO_ACKNOWLEDGE);
+		} catch (javax.jms.JMSException jmse) {
+			System.err.println("error: Cannot connect to Broker - " + broker);
+			jmse.printStackTrace();
+			System.exit(1);
+		}
+		try {
+			javax.jms.Topic topic = pubSession.createTopic(APP_TOPIC);
+			javax.jms.MessageConsumer subscriber = subSession.createConsumer(topic);
+			subscriber.setMessageListener(this);
+			publisher = pubSession.createProducer(topic);
+			// Now that setup is complete, start the Connection
+			connect.start();
+		} catch (javax.jms.JMSException jmse) {
+			jmse.printStackTrace();
+		}
+	}
 
 	MyApp() throws Exception {
-		
-		BasicConfigurator.configure();
-		// config environment for JNDI
-		Properties settings = new Properties();
-		settings.setProperty(Context.INITIAL_CONTEXT_FACTORY, "org.apache.activemq.jndi.ActiveMQInitialContextFactory");
-		settings.setProperty(Context.PROVIDER_URL, "tcp://localhost:61616");
-		// create context
-		Context ctx = new InitialContext(settings);
-		// lookup JMS connection factory
-		ConnectionFactory factory = (ConnectionFactory) ctx.lookup("ConnectionFactory");
-		// lookup destination. (If not exist-->ActiveMQ create once)
-		Destination destination = (Destination) ctx.lookup("dynamicQueues/thanthidet");
-		// get connection using credential
-		Connection con = factory.createConnection("Ty", "123");
-		// connect to MOM
-		
-		// create session
-		session = con.createSession(/* transaction */false, /* ACK */Session.AUTO_ACKNOWLEDGE);
-		// create producer
-		producer = session.createProducer(destination);
-		// tạo consumer
-		receiver = session.createConsumer(destination);
-		
-		// create text message
-//				Message msg = session.createTextMessage("hello mesage from ActiveMQ");
-//				producer.send(msg);
-//				
-//				Message obj = session.createTextMessage("{"
-//						+ "name: 'hieu'"
-//						+ "}");
-//				producer.send(obj);
-//				Person p = new Person(1001, "Thân Thị Đẹt", new Date());
-//				
-//				
-//				msg = session.createTextMessage(gson.toJson(p));
-//				producer.send(msg);
 
-		// Cho receiver lắng nghe trên queue, chừng có message thì notify - async
-
-		receiver.setMessageListener(new MessageListener() {
-
-			// có message đến queue, phương thức này được thực thi
-			public void onMessage(Message msg) {// msg là message nhận được
-				try {
-					if (msg instanceof TextMessage) {
-						TextMessage tm = (TextMessage) msg;
-						String txt = tm.getText();
-						System.out.println("Nhận được " + txt);
-						msg.acknowledge();// gửi tín hiệu ack
-					} else if (msg instanceof ObjectMessage) {
-						ObjectMessage om = (ObjectMessage) msg;
-
-						User user = gson.fromJson(om.getObject().toString(), User.class);
-						String msg1 = user.getName() + ": " + user.getMessage();
-						System.out.println(msg1);
-						String txt = textArea.getText();
-						textArea.setText(txt + "\n" + msg1);
-					}
-					// others message type....
-				} catch (Exception e) {
-					e.printStackTrace();
-				}
-			}
-		});
-		
-		
-		
-		
-		
-		
-		
-		
-		
-		
-		
-		
-		
 		this.setLayout(new BorderLayout());
 		textArea = new JTextArea();
 		textArea.setEditable(false);
@@ -137,8 +93,10 @@ public class MyApp extends JFrame implements ActionListener{
 		pHeader.add(pHeader1, BorderLayout.WEST);
 		password = new JTextField();
 		pHeader2.add(password, BorderLayout.CENTER);
-		pHeader.add(pHeader2, BorderLayout.EAST);
-
+		pHeader.add(pHeader2, BorderLayout.WEST);
+		cnn = new JButton("connect");
+		pHeader.add(cnn, BorderLayout.EAST);
+		cnn.addActionListener(this);
 		// bottom
 
 		JPanel pBottom = new JPanel();
@@ -150,8 +108,7 @@ public class MyApp extends JFrame implements ActionListener{
 		b.setText("Send");
 		b.addActionListener(this);
 		gson = new Gson();
-		user = new User("Guest" + new Random().nextInt() % 100, null);
-		
+		user = new User(usn, null);
 
 		b.setBounds(100, 100, 100, 40);
 		pBottom.add(b, BorderLayout.EAST);
@@ -161,41 +118,72 @@ public class MyApp extends JFrame implements ActionListener{
 		this.add(pBottom, BorderLayout.SOUTH);
 		this.setSize(300, 400);
 
-		// config environment for JMS
-		con.start();
-		System.out.println(user.getName() + " was listened on queue...");
-	
 		this.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-
+		chatter(DEFAULT_BROKER_NAME, usn, ps);
 	}
 
 	public void actionPerformed(ActionEvent e) {
 		Object o = e.getSource();
-		if(o == b) {
-			
-			String u = username.getText().trim();
-			String p = password.getText().trim();
+		if (o == b) {
+			if(!login) {
+				textArea.append("please enter data user connect\n");
+				return;
+			}
 			String msg = textField.getText().trim();
-//			if (u.length() > 0 && p.length() > 0 && msg.length() > 0) {
-
-				
+			if (usn.length() > 0 && ps.length() > 0 && msg.length() > 0) {
+				user.setName(usn);
 				user.setMessage(msg);
-				System.out.println(msg);
 				Message obj1;
-				
-					try {
-						obj1 = session.createObjectMessage(gson.toJson(user));
-						producer.send(obj1);
-						String txt = textArea.getText();
-						textArea.setText(txt + "\n" + msg);
-					} catch (Exception e1) {
-						// TODO Auto-generated catch block
-						e1.printStackTrace();
-					}
 
+				try {
+					obj1 = pubSession.createObjectMessage(gson.toJson(user));
+					textArea.append("\n" +user.getName()+": " + user.getMessage());
+					publisher.send(obj1);
+				} catch (Exception e1) {
+					// TODO Auto-generated catch block
+					e1.printStackTrace();
+				}
 
-//			}
+			}
 		}
+		else if(o == cnn) {
+			usn = username.getText().trim();
+
+			ps = password.getText().trim();
+			
+			if(usn.length() > 0 && ps.length() >0) {
+				user.setName(usn);
+				login = true;
+				textArea.append("user ' "+usn+ "' connected\n");
+			}else {
+				textArea.append("invalid connect\n");
+			}
+		}
+	}
+
+	public void onMessage(Message msg) {
+		try {
+			if (msg instanceof TextMessage) {
+				TextMessage tm = (TextMessage) msg;
+				String txt = tm.getText();
+				System.out.println("Nhận được " + txt);
+				msg.acknowledge();// gửi tín hiệu ack
+			} else if (msg instanceof ObjectMessage) {
+				ObjectMessage om = (ObjectMessage) msg;
+
+				User user1 = gson.fromJson(om.getObject().toString(), User.class);
+				String msg1 = user1.getName() + ": " + user1.getMessage();
+				System.out.print(user.toString());
+				if (user.getName()!=null && !user.getName().equals(user1.getName())) {
+					String txt = textArea.getText();
+					textArea.setText(txt + "\n" + msg1);
+				}
+			}
+			// others message type....
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+
 	}
 
 }
